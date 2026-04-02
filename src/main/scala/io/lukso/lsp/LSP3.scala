@@ -33,18 +33,24 @@ object LSP3:
                         .mapError(e => RpcError(s"Profile JSON parse error: $e"))
           yield profile
 
-        /** Decode JSONURL encoding from ERC725Y value.
-          * Format: hashFunction(4 hex = 2 bytes) + hash(64 hex = 32 bytes) + url(variable).
-          * The 0x6f357c6a prefix means keccak256 + UTF-8 URL. */
+        /** Decode JSONURL / VerifiableURI encoding from ERC725Y value.
+          * Supports both legacy JSONURL and newer VerifiableURI formats by
+          * finding the URL scheme marker in the decoded bytes. */
         private def decodeJsonUrl(rawHex: String): Either[String, String] =
           val clean = rawHex.stripPrefix("0x")
-          if clean.length < 68 then Left(s"Data too short for JSONURL (${clean.length} hex chars)")
+          if clean.length < 10 then Left(s"Data too short for JSONURL (${clean.length} hex chars)")
           else
-            val urlHex = clean.drop(68)
-            if urlHex.isEmpty then Left("Empty URL in JSONURL")
-            else
-              val urlBytes = urlHex.grouped(2).map(Integer.parseInt(_, 16).toByte).toArray
-              Right(new String(urlBytes, "UTF-8"))
+            val allBytes = clean.grouped(2).map(Integer.parseInt(_, 16).toByte).toArray
+            val decoded = new String(allBytes, "UTF-8")
+            // Find the URL scheme in the decoded bytes
+            val ipfsIdx  = decoded.indexOf("ipfs://")
+            val httpsIdx = decoded.indexOf("https://")
+            val httpIdx  = decoded.indexOf("http://")
+            val idx = List(ipfsIdx, httpsIdx, httpIdx).filter(_ >= 0) match
+              case Nil  => -1
+              case idxs => idxs.min
+            if idx < 0 then Left(s"No URL found in JSONURL data")
+            else Right(decoded.substring(idx))
 
         /** Try all IPFS gateways in parallel, return first success. */
         private def fetchFromIpfs(url: String, gateways: List[String], timeoutMs: Long, httpClient: Client): IO[RpcError, String] =
@@ -52,12 +58,15 @@ object LSP3:
             val fullUrl = if url.startsWith("ipfs://") then url.replace("ipfs://", gw)
                           else if url.startsWith("https://") || url.startsWith("http://") then url
                           else gw + url
-            ZIO.scoped {
-              httpClient.request(
-                Request.get(URL.decode(fullUrl).getOrElse(URL.empty))
-              ).flatMap(_.body.asString)
-            }.timeoutFail(RpcError(s"IPFS timeout on $gw"))(Duration.fromMillis(timeoutMs))
-             .mapError(e => RpcError(s"IPFS fetch failed ($gw): ${e.getMessage}"))
+            (for
+              parsed   <- ZIO.fromEither(URL.decode(fullUrl))
+                            .mapError(e => RpcError(s"IPFS fetch failed ($gw): Absolute URL is required: $fullUrl"))
+              response <- ZIO.scoped {
+                            httpClient.request(Request.get(parsed)).flatMap(_.body.asString)
+                          }
+            yield response)
+              .timeoutFail(RpcError(s"IPFS timeout on $gw"))(Duration.fromMillis(timeoutMs))
+              .mapError(e => RpcError(s"IPFS fetch failed ($gw): ${e.getMessage}"))
           }
           if attempts.isEmpty then ZIO.fail(RpcError("No IPFS gateways configured"))
           else

@@ -11,9 +11,10 @@ import java.util.concurrent.atomic.AtomicLong
 /** Multi-endpoint fallback JSON-RPC provider.
   * Tries each endpoint sequentially with timeout, returns first success. */
 final class RpcProvider(
-  client:    Client,
-  endpoints: List[String],
-  timeoutMs: Long
+  client:        Client,
+  endpoints:     List[String],
+  timeoutMs:     Long,
+  customHeaders: Map[String, String] = Map.empty
 ) extends JsonRpcClient:
 
   private val idCounter = new AtomicLong(1)
@@ -38,11 +39,14 @@ final class RpcProvider(
 
     (for
       url      <- ZIO.fromEither(URL.decode(endpoint)).mapError(e => RpcError(s"Bad URL $endpoint: $e"))
+      base      = Request.post(url, Body.fromString(bodyStr))
+                    .addHeader(Header.ContentType(MediaType.application.json))
+      withHdrs  = customHeaders.foldLeft(base) { case (req, (k, v)) =>
+                    req.addHeader(Header.Custom(k, v))
+                  }
       response <- ZIO.scoped {
-                    client.request(
-                      Request.post(url, Body.fromString(bodyStr))
-                        .addHeader(Header.ContentType(MediaType.application.json))
-                    ).mapError(e => RpcError(s"HTTP error on $endpoint: ${e.getMessage}"))
+                    client.request(withHdrs)
+                      .mapError(e => RpcError(s"HTTP error on $endpoint: ${e.getMessage}"))
                   }
       body     <- response.body.asString.mapError(e => RpcError(s"Body read error: ${e.getMessage}"))
       rpcResp  <- ZIO.fromEither(body.fromJson[JsonRpcResponse])
@@ -143,5 +147,5 @@ final class RpcProvider(
 object RpcProvider:
   val layer: ZLayer[Client & LuksoConfig, Nothing, JsonRpcClient] =
     ZLayer.fromFunction { (client: Client, config: LuksoConfig) =>
-      new RpcProvider(client, config.rpcEndpoints, config.rpcTimeoutMs)
+      new RpcProvider(client, config.rpcEndpoints, config.rpcTimeoutMs, config.rpcHeaders)
     }

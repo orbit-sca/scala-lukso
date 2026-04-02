@@ -1,13 +1,14 @@
 package io.lukso
 
 final case class LuksoConfig(
-  rpcEndpoints:   List[String] = LuksoConfig.defaultRpcEndpoints,
-  chainId:        Int          = 42,
-  ipfsGateways:   List[String] = LuksoConfig.defaultIpfsGateways,
-  envioEndpoint:  String       = "https://envio.lukso-mainnet.universal.tech/v1/graphql",
-  blockscoutBase: String       = "https://explorer.execution.mainnet.lukso.network/api/v2",
-  rpcTimeoutMs:   Long         = 8000,
-  ipfsTimeoutMs:  Long         = 10000
+  rpcEndpoints:   List[String]        = LuksoConfig.defaultRpcEndpoints,
+  rpcHeaders:     Map[String, String] = Map.empty,
+  chainId:        Int                 = 42,
+  ipfsGateways:   List[String]        = LuksoConfig.defaultIpfsGateways,
+  envioEndpoint:  String              = "https://envio.lukso-mainnet.universal.tech/v1/graphql",
+  blockscoutBase: String              = "https://explorer.execution.mainnet.lukso.network/api/v2",
+  rpcTimeoutMs:   Long                = 8000,
+  ipfsTimeoutMs:  Long                = 10000
 )
 
 object LuksoConfig:
